@@ -1,0 +1,5 @@
+numpy>=1.24
+pillow>=9.0
+# Use the full build for the GUI's HOG humanoid strategy; the -headless
+# build works for the CLI/library but omits HOGDescriptor on some platforms.
+opencv-python>=4.8

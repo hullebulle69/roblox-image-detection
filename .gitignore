@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+.DS_Store
+# local model files / outputs
+*.onnx
+out/
+annotated/
