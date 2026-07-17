@@ -11,5 +11,12 @@ dist/
 .DS_Store
 # local model files / outputs
 *.onnx
+*.pt
 out/
 annotated/
+# C++ build trees
+cpp/build*/
+trt_engine_cache/
+# training artifacts
+datasets/
+runs/

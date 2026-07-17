@@ -4,6 +4,14 @@ An advanced computer-vision tool that finds **Roblox avatars in images and
 screenshots** and draws confidence-scored boxes around them. It ships with a
 desktop **GUI**, a **command-line** batch tool, and a clean Python API.
 
+**New:** a native **C++ live tool** ([`cpp/`](cpp/README.md)) captures your
+screen with DXGI, runs a YOLO model on the **GPU** (TensorRT / CUDA /
+DirectML), and draws confidence-scored boxes around characters in real time
+on a click-through overlay — 60+ FPS on a midrange GPU. Train a
+high-accuracy model for it with the recipe in
+[`training/`](training/README.md) (synthetic bootstrap included, no labeling
+required to get started).
+
 ![example](docs/example.png)
 
 > **Scope / ethics.** This is an *image analysis* tool. It detects characters
@@ -121,4 +129,9 @@ roblox_detector/
   cli.py        # batch command-line tool
 tests/
   test_detector.py
+cpp/            # native live tool: DXGI capture + GPU ONNX inference
+  src/detector/ #   YOLO ONNX detector core (shared by live + CLI)
+  src/win/      #   rcd_live: capture, DirectComposition overlay
+  src/cli/      #   rcd_cli: batch/benchmark tool (all platforms)
+training/       # train + export a Roblox YOLO model (synthetic bootstrap)
 ```
