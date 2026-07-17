@@ -58,10 +58,19 @@ jobs:
           print('bootstrap model ready')
           PY
 
-      - name: Package
+      - name: Build the Python edition exe (PyInstaller)
         shell: pwsh
         run: |
-          $stage = "roblox-detector-win-x64"
+          python -m pip install --quiet pyinstaller numpy pillow "opencv-python-headless>=4.8,<5"
+          # official windows-latest Python ships Tk, so this exe is GUI-capable
+          pyinstaller --noconfirm --onefile --name roblox-detector-py --console `
+            --collect-submodules roblox_detector `
+            --paths . packaging/rcd_py_entry.py
+
+      - name: Package (C++ edition)
+        shell: pwsh
+        run: |
+          $stage = "roblox-detector-cpp-win-x64"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item cpp/build/Release/rcd_live.exe $stage/
           Copy-Item cpp/build/Release/rcd_cli.exe $stage/
@@ -75,15 +84,28 @@ jobs:
           Copy-Item docs/RELEASE_QUICKSTART.md $stage/QUICKSTART.txt
           Compress-Archive -Path "$stage/*" -DestinationPath "$stage.zip" -Force
 
-      - name: Upload build artifact
+      - name: Package (Python edition)
+        shell: pwsh
+        run: |
+          $stage = "roblox-detector-python-win-x64"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item dist/roblox-detector-py.exe $stage/
+          Copy-Item docs/PYTHON_EXE_QUICKSTART.md $stage/QUICKSTART.txt
+          Compress-Archive -Path "$stage/*" -DestinationPath "$stage.zip" -Force
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: roblox-detector-win-x64
-          path: roblox-detector-win-x64.zip
+          path: |
+            roblox-detector-cpp-win-x64.zip
+            roblox-detector-python-win-x64.zip
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: roblox-detector-win-x64.zip
+          files: |
+            roblox-detector-cpp-win-x64.zip
+            roblox-detector-python-win-x64.zip
           generate_release_notes: true
