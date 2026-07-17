@@ -20,6 +20,12 @@
 #if __has_include(<dml_provider_factory.h>) && __has_include(<DirectML.h>)
 #define RCD_HAS_DML 1
 #include <dml_provider_factory.h>
+#elif defined(RCD_DML_MANUAL_DECL)
+// MinGW build against a DirectML-enabled onnxruntime.dll: declare the one
+// factory function we call instead of pulling in DirectML.h.
+#define RCD_HAS_DML 1
+extern "C" OrtStatus* ORT_API_CALL OrtSessionOptionsAppendExecutionProvider_DML(
+    OrtSessionOptions* options, int device_id);
 #endif
 #endif
 

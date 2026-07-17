@@ -1,0 +1,83 @@
+name: Build Windows release
+
+# Builds rcd_live.exe + rcd_cli.exe with Visual Studio against the DirectML
+# ONNX Runtime package (works on any DX12 GPU — NVIDIA/AMD/Intel) and, on a
+# tag push, attaches a ready-to-run zip to the GitHub release.
+#
+# Trigger a release build by pushing a tag:  git tag v0.1.0 && git push --tags
+# Or run it manually from the Actions tab (uploads a build artifact only).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to create/update the release on tag builds
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      ORT_VERSION: "1.20.1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download ONNX Runtime (DirectML)
+        shell: pwsh
+        run: |
+          $ver = $env:ORT_VERSION
+          $nupkg = "Microsoft.ML.OnnxRuntime.DirectML.$ver.nupkg"
+          Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/$ver" -OutFile $nupkg
+          Expand-Archive -Path $nupkg -DestinationPath ort_pkg -Force
+          # Normalize to the include/ + lib/ layout the CMakeLists expects.
+          New-Item -ItemType Directory -Force -Path ort/lib | Out-Null
+          Copy-Item -Recurse ort_pkg/build/native/include ort/include
+          Copy-Item ort_pkg/runtimes/win-x64/native/* ort/lib/
+          "ORT_ROOT=$(Resolve-Path ort)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure
+        run: cmake -S cpp -B cpp/build -A x64 -DONNXRUNTIME_ROOT="${{ env.ORT_ROOT }}"
+
+      - name: Build
+        run: cmake --build cpp/build --config Release
+
+      - name: Train a bootstrap model to ship
+        shell: pwsh
+        run: |
+          python -m pip install --quiet ultralytics onnx onnxsim
+          python training/synthetic_dataset.py --out datasets/synth --train 400 --val 80 --imgsz 320 --seed 0
+          python - <<'PY'
+          from ultralytics import YOLO
+          m = YOLO('yolov8n.yaml')
+          m.train(data='datasets/synth/data.yaml', epochs=40, imgsz=320, batch=16, device='cpu', plots=False, verbose=False, project='runs', name='synth', exist_ok=True)
+          p = m.export(format='onnx', imgsz=320, opset=12, dynamic=False, simplify=True)
+          import shutil; shutil.copy(p, 'roblox_bootstrap_320.onnx')
+          print('bootstrap model ready')
+          PY
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = "roblox-detector-win-x64"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item cpp/build/Release/rcd_live.exe $stage/
+          Copy-Item cpp/build/Release/rcd_cli.exe $stage/
+          Copy-Item cpp/build/Release/*.dll $stage/
+          Copy-Item roblox_bootstrap_320.onnx $stage/
+          Copy-Item cpp/README.md $stage/README.md
+          Copy-Item docs/RELEASE_QUICKSTART.md $stage/QUICKSTART.txt
+          Compress-Archive -Path "$stage/*" -DestinationPath "$stage.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: roblox-detector-win-x64
+          path: roblox-detector-win-x64.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: roblox-detector-win-x64.zip
+          generate_release_notes: true

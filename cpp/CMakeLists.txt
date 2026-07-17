@@ -52,6 +52,11 @@ target_link_libraries(rcd_core PUBLIC "${ONNXRUNTIME_LIB}" Threads::Threads)
 if(WIN32)
   target_compile_definitions(rcd_core PRIVATE UNICODE _UNICODE NOMINMAX
     WIN32_LEAN_AND_MEAN)
+  if(MINGW)
+    # MinGW lacks DirectML.h; enable DML via a manual declaration when the
+    # linked onnxruntime.dll is a DirectML build.
+    target_compile_definitions(rcd_core PRIVATE RCD_DML_MANUAL_DECL)
+  endif()
 endif()
 if(MSVC)
   target_compile_options(rcd_core PRIVATE /W4)
