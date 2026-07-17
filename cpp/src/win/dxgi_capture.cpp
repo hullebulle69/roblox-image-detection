@@ -96,14 +96,15 @@ bool DxgiScreenCapture::initialize() {
         last_error_ = hr_message("IDXGIOutput1 query", hr);
         return false;
     }
-    return create_duplication();
+    return create_duplication(/*attempts=*/10);
 }
 
-bool DxgiScreenCapture::create_duplication() {
+bool DxgiScreenCapture::create_duplication(int attempts) {
     release_duplication();
     HRESULT hr = S_OK;
-    // DuplicateOutput transiently fails during mode switches / UAC prompts.
-    for (int attempt = 0; attempt < 10; ++attempt) {
+    // DuplicateOutput transiently fails during mode switches / UAC prompts /
+    // the lock screen (E_ACCESSDENIED while the secure desktop is active).
+    for (int attempt = 0; attempt < attempts; ++attempt) {
         hr = output1_->DuplicateOutput(device_.Get(), &duplication_);
         if (SUCCEEDED(hr)) break;
         if (hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE) {
@@ -112,12 +113,14 @@ bool DxgiScreenCapture::create_duplication() {
                 "already duplicating this output)";
             return false;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (attempt + 1 < attempts)
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
     if (FAILED(hr)) {
         last_error_ = hr_message("DuplicateOutput", hr);
         return false;
     }
+    had_duplication_ = true;
 
     DXGI_OUTDUPL_DESC dup_desc{};
     duplication_->GetDesc(&dup_desc);
@@ -151,7 +154,12 @@ void DxgiScreenCapture::release_duplication() {
 
 CaptureStatus DxgiScreenCapture::grab(Frame& out) {
     if (!duplication_) {
-        if (!create_duplication()) return CaptureStatus::Error;
+        // While the secure desktop (lock screen / UAC) is up, re-creation
+        // keeps failing — stay in Reinit so the caller retries until the
+        // desktop comes back, rather than treating it as fatal.
+        if (!create_duplication(/*attempts=*/1))
+            return had_duplication_ ? CaptureStatus::Reinit
+                                    : CaptureStatus::Error;
         return CaptureStatus::Reinit;
     }
 
@@ -162,7 +170,10 @@ CaptureStatus DxgiScreenCapture::grab(Frame& out) {
     if (hr == DXGI_ERROR_WAIT_TIMEOUT) return CaptureStatus::Timeout;
     if (hr == DXGI_ERROR_ACCESS_LOST) {
         // Mode change, fullscreen transition, or secure desktop; rebuild.
-        if (!create_duplication()) return CaptureStatus::Error;
+        release_duplication();
+        if (!create_duplication(/*attempts=*/1))
+            return had_duplication_ ? CaptureStatus::Reinit
+                                    : CaptureStatus::Error;
         return CaptureStatus::Reinit;
     }
     if (FAILED(hr)) {

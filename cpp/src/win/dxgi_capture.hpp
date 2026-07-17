@@ -42,7 +42,7 @@ public:
     const std::string& last_error() const { return last_error_; }
 
 private:
-    bool create_duplication();
+    bool create_duplication(int attempts);
     void release_duplication();
 
     Options opts_;
@@ -55,6 +55,9 @@ private:
     int height_ = 0;
     RECT desktop_rect_{};
     std::string last_error_;
+    // Once capture has worked, re-creation failures are treated as
+    // transient (lock screen, UAC) instead of fatal.
+    bool had_duplication_ = false;
 };
 
 }  // namespace rcd

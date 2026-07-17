@@ -78,8 +78,8 @@ rcd_live --model m.onnx --backend directml --conf 0.4 --monitor 1
   character count.
 - Run Roblox **windowed or borderless fullscreen** — exclusive fullscreen
   bypasses desktop composition, so no overlay of any kind can draw above it.
-- First TensorRT run builds an engine (can take minutes); it's cached in
-  `trt_engine_cache/` next to the executable afterwards.
+- First TensorRT run builds an engine (can take minutes); cached in
+  `trt_engine_cache/` under the directory you launch from afterwards.
 - The overlay is excluded from screen capture
   (`WDA_EXCLUDEFROMCAPTURE`), so the detector never sees — and re-detects —
   its own boxes. Side effect: the boxes won't appear in OBS/recordings

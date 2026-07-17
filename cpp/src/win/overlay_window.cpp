@@ -229,13 +229,19 @@ bool OverlayWindow::render(const std::vector<Detection>& detections,
         d2d_ctx_->DrawRoundedRectangle(
             D2D1::RoundedRect(box, 4.f, 4.f), brush_.Get(), 2.5f);
 
-        wchar_t text[128];
-        std::swprintf(text, 128, L"%ls %.0f%%", widen(det.label).c_str(),
-                      det.score * 100.f);
+        // Class names come from model metadata (unbounded, untrusted) —
+        // compose with wstring rather than a fixed swprintf buffer.
+        std::wstring text = widen(det.label);
+        if (text.size() > 96) text.resize(96);
+        wchar_t pct[16];
+        std::swprintf(pct, 16, L" %.0f%%", det.score * 100.f);
+        pct[15] = L'\0';
+        text += pct;
         ComPtr<IDWriteTextLayout> layout;
         if (FAILED(dwrite_->CreateTextLayout(
-                text, static_cast<UINT32>(wcslen(text)), label_format_.Get(),
-                static_cast<float>(width_), 40.f, &layout)))
+                text.c_str(), static_cast<UINT32>(text.size()),
+                label_format_.Get(), static_cast<float>(width_), 40.f,
+                &layout)))
             continue;
         DWRITE_TEXT_METRICS tm{};
         layout->GetMetrics(&tm);
@@ -274,6 +280,7 @@ bool OverlayWindow::render(const std::vector<Detection>& detections,
                           hud.inference_ms, hud.character_count,
                           hud.character_count == 1 ? L"" : L"s");
         }
+        text[255] = L'\0';  // msvcrt may not terminate on truncation
         ComPtr<IDWriteTextLayout> layout;
         if (SUCCEEDED(dwrite_->CreateTextLayout(
                 text, static_cast<UINT32>(wcslen(text)), hud_format_.Get(),

@@ -106,7 +106,12 @@ void detection_loop(rcd::DxgiScreenCapture& capture,
         }
         const rcd::CaptureStatus status = capture.grab(frame);
         if (status == rcd::CaptureStatus::Timeout) {
-            continue;  // static screen; nothing new to detect
+            // Static screen: nothing changed, so the last detections are
+            // still exactly right — keep them from going "stale".
+            std::lock_guard<std::mutex> lock(shared.mutex);
+            if (shared.updated_at_ms != 0)
+                shared.updated_at_ms = GetTickCount64();
+            continue;
         }
         if (status == rcd::CaptureStatus::Reinit) {
             if (!warned_size_change &&
@@ -117,7 +122,8 @@ void detection_loop(rcd::DxgiScreenCapture& capture,
                           << "); boxes may misalign — restart rcd_live\n";
                 warned_size_change = true;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            // Covers lock screen / UAC too, which can last minutes.
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
             continue;
         }
         if (status == rcd::CaptureStatus::Error) {
@@ -237,9 +243,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    RegisterHotKey(nullptr, kHotkeyToggle, 0, VK_F8);
-    RegisterHotKey(nullptr, kHotkeyPause, 0, VK_F9);
-    RegisterHotKey(nullptr, kHotkeyQuit, 0, VK_F10);
+    if (!RegisterHotKey(nullptr, kHotkeyToggle, 0, VK_F8) |
+        !RegisterHotKey(nullptr, kHotkeyPause, 0, VK_F9) |
+        !RegisterHotKey(nullptr, kHotkeyQuit, 0, VK_F10)) {
+        std::cerr << "[rcd] warning: some hotkeys are taken by another app; "
+                     "use Ctrl+C in this console to quit\n";
+    }
     std::cerr << "[rcd] running — F8 show/hide, F9 pause, F10 quit\n"
               << "[rcd] tip: run Roblox in windowed or borderless mode; "
                  "exclusive fullscreen hides overlays\n";
@@ -301,6 +310,7 @@ int main(int argc, char** argv) {
             overlay.destroy();
             if (!overlay.create(capture.desktop_rect(), err)) {
                 std::cerr << "error: overlay recreate failed: " << err << "\n";
+                flags.failed.store(true);
                 flags.running.store(false);
             }
         }

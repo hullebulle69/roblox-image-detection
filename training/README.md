@@ -71,8 +71,8 @@ up without extra config).
 
 ```bash
 # live overlay (Windows, GPU):
-rcd_live --model runs/roblox/weights/best.onnx
+rcd_live --model runs/detect/roblox/weights/best.onnx
 
 # stills / batch / benchmarking (any OS):
-rcd_cli screenshot.png --model runs/roblox/weights/best.onnx
+rcd_cli screenshot.png --model runs/detect/roblox/weights/best.onnx
 ```

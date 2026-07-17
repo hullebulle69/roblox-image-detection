@@ -8,7 +8,7 @@ Quick start (synthetic bootstrap, no labeling needed):
 
 Real accuracy (fine-tune the bootstrap on labeled screenshots):
     python training/train_roblox_yolo.py --data my_screenshots/data.yaml \
-        --weights runs/roblox/weights/best.pt --epochs 80
+        --weights runs/detect/roblox/weights/best.pt --epochs 80
 
 The exported .onnx embeds the class names, which the C++ detector reads
 automatically.

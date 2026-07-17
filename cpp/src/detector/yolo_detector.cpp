@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
@@ -180,8 +181,8 @@ std::vector<Detection> nms(std::vector<Detection>& candidates,
     std::vector<bool> suppressed(candidates.size(), false);
     for (size_t i = 0; i < candidates.size(); ++i) {
         if (suppressed[i]) continue;
-        kept.push_back(candidates[i]);
         if (static_cast<int>(kept.size()) >= max_detections) break;
+        kept.push_back(candidates[i]);
         for (size_t j = i + 1; j < candidates.size(); ++j) {
             if (suppressed[j]) continue;
             if (candidates[j].class_id != candidates[i].class_id) continue;
@@ -220,7 +221,6 @@ const char* backend_name(Backend b) {
 struct YoloDetector::Impl {
     DetectorOptions opts;
     Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "rcd"};
-    Ort::SessionOptions session_options;
     std::unique_ptr<Ort::Session> session;
     Ort::MemoryInfo memory_info =
         Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -234,90 +234,90 @@ struct YoloDetector::Impl {
     DetectorStats stats;
 
     explicit Impl(const DetectorOptions& options) : opts(options) {
-        configure_session_options();
-        session = std::make_unique<Ort::Session>(
-            env, to_ort_path(opts.model_path).c_str(), session_options);
+        if (!std::ifstream(opts.model_path, std::ios::binary))
+            throw std::runtime_error("model file not found or unreadable: " +
+                                     opts.model_path);
+        create_session_with_fallback();
         read_model_io();
         resolve_class_names();
     }
 
-    void configure_session_options() {
-        session_options.SetGraphOptimizationLevel(
-            GraphOptimizationLevel::ORT_ENABLE_ALL);
-        if (opts.intra_op_threads > 0)
-            session_options.SetIntraOpNumThreads(opts.intra_op_threads);
+    // A GPU provider can fail either when appended (library missing) or
+    // later, inside Session creation (no device, driver mismatch). Both
+    // must fall through to the next backend under Auto, so each candidate
+    // gets a fresh SessionOptions and a full session-creation attempt.
+    void create_session_with_fallback() {
+        std::vector<Backend> order;
+        if (opts.backend == Backend::Auto)
+            order = {Backend::TensorRT, Backend::CUDA, Backend::DirectML,
+                     Backend::CPU};
+        else
+            order = {opts.backend};
 
-        const bool want_auto = opts.backend == Backend::Auto;
-        auto want = [&](Backend b) {
-            return want_auto || opts.backend == b;
-        };
-        std::string tried;
-
-        if (want(Backend::TensorRT) && try_tensorrt(tried)) return;
-        if (want(Backend::CUDA) && try_cuda(tried)) return;
-        if (want(Backend::DirectML) && try_dml(tried)) return;
-
-        if (!want_auto && opts.backend != Backend::CPU) {
-            throw std::runtime_error(
-                std::string("requested backend '") + backend_name(opts.backend) +
-                "' is unavailable in this ONNX Runtime build/machine" +
-                (tried.empty() ? "" : " (" + tried + ")"));
+        std::string errors;
+        for (Backend b : order) {
+            Ort::SessionOptions so;
+            so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+            if (opts.intra_op_threads > 0)
+                so.SetIntraOpNumThreads(opts.intra_op_threads);
+            try {
+                if (!append_provider(so, b, errors)) continue;
+                session = std::make_unique<Ort::Session>(
+                    env, to_ort_path(opts.model_path).c_str(), so);
+                provider = backend_name(b);
+                if (opts.backend == Backend::Auto && b == Backend::CPU &&
+                    !errors.empty())
+                    std::cerr << "[rcd] GPU providers unavailable (" << errors
+                              << "); falling back to CPU.\n";
+                return;
+            } catch (const Ort::Exception& e) {
+                errors += std::string(errors.empty() ? "" : "; ") +
+                          backend_name(b) + ": " + e.what();
+            }
         }
-        provider = "CPU";
-        if (!tried.empty())
-            std::cerr << "[rcd] GPU providers unavailable (" << tried
-                      << "); falling back to CPU.\n";
+        throw std::runtime_error("no usable execution provider: " + errors);
     }
 
-    bool try_tensorrt(std::string& tried) {
-        try {
-            OrtTensorRTProviderOptions trt{};
-            trt.device_id = opts.device_id;
-            trt.trt_fp16_enable = 1;
-            trt.trt_engine_cache_enable = 1;
-            trt.trt_engine_cache_path = "trt_engine_cache";
-            trt.trt_max_workspace_size = 2ULL << 30;
-            session_options.AppendExecutionProvider_TensorRT(trt);
-            provider = "TensorRT";
-            return true;
-        } catch (const Ort::Exception& e) {
-            tried += std::string(tried.empty() ? "" : "; ") + "TensorRT: " + e.what();
-            return false;
-        }
-    }
-
-    bool try_cuda(std::string& tried) {
-        try {
-            OrtCUDAProviderOptions cuda{};
-            cuda.device_id = opts.device_id;
-            session_options.AppendExecutionProvider_CUDA(cuda);
-            provider = "CUDA";
-            return true;
-        } catch (const Ort::Exception& e) {
-            tried += std::string(tried.empty() ? "" : "; ") + "CUDA: " + e.what();
-            return false;
-        }
-    }
-
-    bool try_dml(std::string& tried) {
+    bool append_provider(Ort::SessionOptions& so, Backend b,
+                         std::string& errors) {
+        switch (b) {
+            case Backend::CPU:
+            case Backend::Auto:
+                return true;
+            case Backend::TensorRT: {
+                OrtTensorRTProviderOptions trt{};
+                trt.device_id = opts.device_id;
+                trt.trt_fp16_enable = 1;
+                trt.trt_engine_cache_enable = 1;
+                trt.trt_engine_cache_path = "trt_engine_cache";
+                trt.trt_max_workspace_size = 2ULL << 30;
+                so.AppendExecutionProvider_TensorRT(trt);  // throws if absent
+                return true;
+            }
+            case Backend::CUDA: {
+                OrtCUDAProviderOptions cuda{};
+                cuda.device_id = opts.device_id;
+                so.AppendExecutionProvider_CUDA(cuda);  // throws if absent
+                return true;
+            }
+            case Backend::DirectML:
 #ifdef RCD_HAS_DML
-        try {
-            // DirectML requires sequential execution and no memory pattern.
-            session_options.DisableMemPattern();
-            session_options.SetExecutionMode(ORT_SEQUENTIAL);
-            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(
-                session_options, opts.device_id));
-            provider = "DirectML";
-            return true;
-        } catch (const Ort::Exception& e) {
-            tried += std::string(tried.empty() ? "" : "; ") + "DirectML: " + e.what();
-            return false;
-        }
+                // DirectML requires sequential execution, no memory pattern.
+                so.DisableMemPattern();
+                so.SetExecutionMode(ORT_SEQUENTIAL);
+                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(
+                    so, opts.device_id));
+                return true;
 #else
-        tried += std::string(tried.empty() ? "" : "; ") +
-                 "DirectML: not compiled in";
-        return false;
+                errors += std::string(errors.empty() ? "" : "; ") +
+                          "DirectML: not compiled in";
+                if (opts.backend == Backend::DirectML)
+                    throw std::runtime_error(
+                        "DirectML support is not compiled into this build");
+                return false;
 #endif
+        }
+        return false;
     }
 
     void read_model_io() {
@@ -437,7 +437,8 @@ struct YoloDetector::Impl {
             float obj = 1.f;
             if (has_objectness) {
                 obj = attr(i, 4);
-                if (obj < opts.conf_threshold) continue;
+                // Inverted comparison so NaN scores are rejected too.
+                if (!(obj >= opts.conf_threshold)) continue;
             }
             int best_class = -1;
             float best_score = 0.f;
@@ -450,7 +451,8 @@ struct YoloDetector::Impl {
                 }
             }
             const float score = obj * best_score;
-            if (score < opts.conf_threshold || !allowed(best_class)) continue;
+            if (!(score >= opts.conf_threshold) || !allowed(best_class))
+                continue;
 
             const float cx = attr(i, 0);
             const float cy = attr(i, 1);

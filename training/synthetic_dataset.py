@@ -59,8 +59,13 @@ def _draw_block(draw: ImageDraw.ImageDraw, box, color, rng: random.Random):
     x1, y1, x2, y2 = box
     if x2 <= x1 or y2 <= y1:
         return
-    radius = max(1, int(min(x2 - x1, y2 - y1) * rng.uniform(0.04, 0.16)))
     face = _shade(color, rng.uniform(0.92, 1.05))
+    if x2 - x1 < 3 or y2 - y1 < 3:
+        # Too small for rounded corners / highlight strip (they would
+        # produce inverted rectangles at tiny sizes).
+        draw.rectangle(box, fill=face, outline=_shade(color, 0.62))
+        return
+    radius = max(1, int(min(x2 - x1, y2 - y1) * rng.uniform(0.04, 0.16)))
     draw.rounded_rectangle(box, radius=radius, fill=face,
                            outline=_shade(color, 0.62), width=1)
     # Cheap top-lit gradient: a lighter strip along the upper edge.
@@ -212,11 +217,16 @@ def render_scene(imgsz: int, rng: random.Random):
 
 
 def _overlap(a, b):
+    """Fraction of the *smaller-covered* box that is overlapped — symmetric,
+    so a big new avatar can't fully hide a small existing one (which would
+    leave a ghost label)."""
     ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
     inter = ix * iy
-    area = (a[2] - a[0]) * (a[3] - a[1])
-    return inter / area if area > 0 else 0.0
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    return max(inter / area_a if area_a > 0 else 0.0,
+               inter / area_b if area_b > 0 else 0.0)
 
 
 def write_split(root: Path, split: str, count: int, imgsz: int,

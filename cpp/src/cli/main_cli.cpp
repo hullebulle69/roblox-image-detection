@@ -110,14 +110,12 @@ std::string detections_to_json(const std::string& image,
          "\",\n  \"detections\": [\n";
     for (size_t i = 0; i < dets.size(); ++i) {
         const auto& d = dets[i];
-        char buf[256];
-        std::snprintf(buf, sizeof(buf),
-                      "    {\"label\": \"%s\", \"score\": %.4f, "
-                      "\"box\": [%.1f, %.1f, %.1f, %.1f]}%s\n",
-                      json_escape(d.label).c_str(), d.score, d.box.x1,
-                      d.box.y1, d.box.x2, d.box.y2,
-                      i + 1 < dets.size() ? "," : "");
-        j += buf;
+        char nums[160];
+        std::snprintf(nums, sizeof(nums),
+                      "\"score\": %.4f, \"box\": [%.1f, %.1f, %.1f, %.1f]",
+                      d.score, d.box.x1, d.box.y1, d.box.x2, d.box.y2);
+        j += "    {\"label\": \"" + json_escape(d.label) + "\", " + nums +
+             "}" + (i + 1 < dets.size() ? "," : "") + "\n";
     }
     j += "  ]\n}\n";
     return j;
@@ -200,6 +198,9 @@ int main(int argc, char** argv) {
 
         auto detections = detector.detect(frame);
 
+        // Keep stdout clean for machine consumption when JSON goes there.
+        FILE* table = json_path == "-" ? stderr : stdout;
+
         if (bench > 0) {
             detector.warmup(frame.width, frame.height);
             double pre = 0, inf = 0, post = 0;
@@ -211,15 +212,13 @@ int main(int argc, char** argv) {
                 post += st.postprocess_ms;
             }
             const double total = (pre + inf + post) / bench;
-            std::printf(
+            std::fprintf(
+                table,
                 "bench (%d iters): pre %.2f ms | infer %.2f ms | post %.2f ms "
                 "| total %.2f ms | %.1f FPS\n",
                 bench, pre / bench, inf / bench, post / bench, total,
                 1000.0 / total);
         }
-
-        // Keep stdout clean for machine consumption when JSON goes there.
-        FILE* table = json_path == "-" ? stderr : stdout;
         for (const auto& d : detections)
             std::fprintf(table, "%-24s %5.1f%%  [%7.1f, %7.1f, %7.1f, %7.1f]\n",
                          d.label.c_str(), d.score * 100.f, d.box.x1, d.box.y1,
